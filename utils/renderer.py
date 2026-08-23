@@ -12,6 +12,7 @@ from envs.clash import MAX_ELIXIR, Player, Side
 GRASS_LIGHT = (182, 198, 79)
 GRASS_DARK = (171, 190, 75)
 GRID_LINE = (127, 142, 57)
+MOUSE_HIGHLIGHT = (255, 0, 0)
 
 PANEL_COLOR = (135, 96, 64)
 
@@ -60,7 +61,9 @@ class ArenaRenderer:
     def draw(self, players: Mapping[Side, Player]):
         """Repaint the game and limit human display to 30 FPS."""
         self.init_pygame()
+        pygame.event.pump()
         self._draw_arena()
+        self._draw_mouse()
         
         top_cards = players[Side.TOP].cards
         bottom_cards = players[Side.BOTTOM].cards
@@ -70,7 +73,6 @@ class ArenaRenderer:
         self._draw_elixir(players[Side.TOP], Side.TOP)
         self._draw_elixir(players[Side.BOTTOM], Side.BOTTOM)
 
-        pygame.event.pump()
         pygame.display.update()
         self.clock.tick(self.render_fps)
 
@@ -94,6 +96,26 @@ class ArenaRenderer:
                 )
                 pygame.draw.rect(self.window, color, rect)
                 pygame.draw.rect(self.window, GRID_LINE, rect, width=1)
+
+    def _draw_mouse(self):
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        arena_mouse_y = mouse_y - OFFSET
+
+        if not (
+            0 <= mouse_x < self.arena_width
+            and 0 <= arena_mouse_y < self.arena_height
+        ):
+            return
+
+        column = mouse_x // TILE_SIZE
+        row = arena_mouse_y // TILE_SIZE
+        rect = pygame.Rect(
+            column * TILE_SIZE,
+            OFFSET + row * TILE_SIZE,
+            TILE_SIZE,
+            TILE_SIZE,
+        )
+        pygame.draw.rect(self.window, MOUSE_HIGHLIGHT, rect, width=2)
 
 
     def _draw_panel(self, cards: Sequence[Card], side: Side):
