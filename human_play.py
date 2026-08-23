@@ -3,7 +3,7 @@ from utils.renderer import ArenaRenderer
 
 
 game = ClashGame()
-arena = game.reset()
+arena = game.arena
 renderer = ArenaRenderer(
     num_rows=arena.rows,
     num_columns=arena.columns,
@@ -11,5 +11,5 @@ renderer = ArenaRenderer(
 )
 
 while True:
-    renderer.draw()
-    # if 1 second pass add 1 elixir
+    game.tick()
+    renderer.draw(game.players)
