@@ -1,6 +1,6 @@
 """Pygame renderer for the Clash Royale arena."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 
 import pygame
@@ -23,6 +23,9 @@ CARD_GAP_Y = 2
 
 ELIXIR_PANEL_HEIGHT = TILE_SIZE
 ELIXIR_PANEL_COLOR = (232, 45, 225)
+
+RED_TOP = (255,0,0)
+BLUE_BOTTOM = (0,0,255)
 
 
 OFFSET = CARD_PANEL_HEIGHT + ELIXIR_PANEL_HEIGHT
@@ -47,6 +50,7 @@ class ArenaRenderer:
         self.window = None
         self.clock = None
         self.card_images: dict[tuple[str, int, int], pygame.Surface] = {}
+        self.card_rects: list[tuple[pygame.Rect, Side, Card]] = []
 
     def init_pygame(self):
         if self.window is not None:
@@ -58,23 +62,48 @@ class ArenaRenderer:
         pygame.display.set_caption("Clash Royale RL")
         self.clock = pygame.time.Clock()
 
-    def draw(self, players: Mapping[Side, Player]):
+    def draw(
+        self,
+        players: Mapping[Side, Player],
+        hovered_tile: tuple[int, int] | None,
+    ):
         """Repaint the game and limit human display to 30 FPS."""
         self.init_pygame()
-        pygame.event.pump()
         self._draw_arena()
-        self._draw_mouse()
+        self._draw_troops(players[Side.TOP], Side.TOP)
+        self._draw_troops(players[Side.BOTTOM], Side.BOTTOM)
+        if hovered_tile is not None:
+            self._draw_mouse(*hovered_tile)
         
-        top_cards = players[Side.TOP].cards
-        bottom_cards = players[Side.BOTTOM].cards
-        self._draw_panel(top_cards, Side.TOP)
-        self._draw_panel(bottom_cards, Side.BOTTOM)
+        self.card_rects.clear()
+        self._draw_panel(players[Side.TOP], Side.TOP)
+        self._draw_panel(players[Side.BOTTOM], Side.BOTTOM)
 
         self._draw_elixir(players[Side.TOP], Side.TOP)
         self._draw_elixir(players[Side.BOTTOM], Side.BOTTOM)
 
         pygame.display.update()
         self.clock.tick(self.render_fps)
+
+    def card_at_position(self, position: tuple[int, int]):
+        for rect, side, card in self.card_rects:
+            if rect.collidepoint(position):
+                return side, card
+        return None
+
+    def tile_at_position(self, position: tuple[int, int]):
+        mouse_x, mouse_y = position
+        arena_mouse_y = mouse_y - OFFSET
+
+        if not (
+            0 <= mouse_x < self.arena_width
+            and 0 <= arena_mouse_y < self.arena_height
+        ):
+            return None
+
+        row = arena_mouse_y // TILE_SIZE
+        column = mouse_x // TILE_SIZE
+        return row, column
 
     def close(self):
         if self.window is not None:
@@ -97,18 +126,7 @@ class ArenaRenderer:
                 pygame.draw.rect(self.window, color, rect)
                 pygame.draw.rect(self.window, GRID_LINE, rect, width=1)
 
-    def _draw_mouse(self):
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        arena_mouse_y = mouse_y - OFFSET
-
-        if not (
-            0 <= mouse_x < self.arena_width
-            and 0 <= arena_mouse_y < self.arena_height
-        ):
-            return
-
-        column = mouse_x // TILE_SIZE
-        row = arena_mouse_y // TILE_SIZE
+    def _draw_mouse(self, row: int, column: int):
         rect = pygame.Rect(
             column * TILE_SIZE,
             OFFSET + row * TILE_SIZE,
@@ -117,8 +135,46 @@ class ArenaRenderer:
         )
         pygame.draw.rect(self.window, MOUSE_HIGHLIGHT, rect, width=2)
 
+    def _draw_troops(self, player: Player, side: Side):
+        for troop in player.troops.values():
+            troop_image = (
+                troop.card.top_troop_image
+                if side is Side.TOP
+                else troop.card.bottom_troop_image
+            )
+            image_key = (troop_image, TILE_SIZE, TILE_SIZE)
+            if image_key not in self.card_images:
+                image = pygame.image.load(
+                    CARD_IMAGE_DIR / troop_image
+                ).convert_alpha()
+                self.card_images[image_key] = pygame.transform.smoothscale(
+                    image,
+                    (TILE_SIZE, TILE_SIZE),
+                )
 
-    def _draw_panel(self, cards: Sequence[Card], side: Side):
+            image = self.card_images[image_key]
+            rect = image.get_rect(
+                center=(
+                    int(troop.x * TILE_SIZE),
+                    OFFSET + int(troop.y * TILE_SIZE),
+                )
+            )
+            self.window.blit(image, rect)
+
+            color = RED_TOP if side is Side.TOP else BLUE_BOTTOM
+            hp_rect = pygame.Rect(
+                rect.left,
+                rect.top - TILE_SIZE // 2,
+                int(TILE_SIZE * troop.hp / troop.card.hp),
+                TILE_SIZE // 2,
+            )
+            pygame.draw.rect(self.window, color, hp_rect)
+
+
+
+
+    def _draw_panel(self, player: Player, side: Side):
+        cards = player.cards
         panel_y = (
             0
             if side is Side.TOP
@@ -156,6 +212,10 @@ class ArenaRenderer:
                 )
 
             self.window.blit(self.card_images[image_key], rect)
+            if card is player.selected_card:
+                pygame.draw.rect(self.window, MOUSE_HIGHLIGHT, rect, width=3)
+
+            self.card_rects.append((rect, side, card))
             slot_x += width + CARD_GAP_X
 
 
