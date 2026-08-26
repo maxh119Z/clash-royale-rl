@@ -1,15 +1,14 @@
-"""Card definitions for the Clash Royale environment."""
+# I decided to separate this from the core game environment because we may add a lot more cards
 
 from dataclasses import dataclass
 
-
 @dataclass(frozen=True)
 class Card:
-    """A card's rules-facing identity and cost."""
-
+    # set up card object
     name: str
     elixir_cost: int
     hp: int
+    attack: int
     card_type: str
     image_filename: str
     top_troop_image: str
@@ -21,6 +20,7 @@ GOBLINS = Card(
     name="Goblins",
     elixir_cost=4,
     hp= 100,
+    attack = 1,
     card_type="troop",
     image_filename="goblins.png",
     top_troop_image = "troops/top_goblin.png",
@@ -31,6 +31,7 @@ GOBLINS = Card(
 SPEAR_GOBLINS = Card(
     name="Spear Goblins",
     elixir_cost=4,
+    attack = 2,
     hp= 50,
     card_type="troop",
     image_filename="spear_goblins.png",

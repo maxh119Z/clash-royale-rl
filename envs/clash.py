@@ -1,4 +1,7 @@
 """Core state for the Clash Royale environment."""
+# This file lowkey is all the core functionality for Player, Arena object, etc.
+# and also core functions. Just think anything GAME MECHANIC is in this file. 
+# CORE GAME ENVIRONMENT.
 
 from dataclasses import dataclass, field
 from enum import Enum
@@ -11,9 +14,12 @@ ROWS = 32
 COLUMNS = 18
 
 MAX_ELIXIR = 10.0
-STARTING_ELIXIR = 2.0
-ELIXIR_PER_SECOND = 1.0
+STARTING_ELIXIR = 4.0
+ELIXIR_PER_SECOND = 1 # match CR real game: 0.357
 MOVEMENT_PER_TICK = 1 / FPS
+STARTING_TOWER_HP = 1000
+TOWER_WIDTH = 4
+TOWER_HEIGHT = 4
 
 
 class Side(Enum):
@@ -25,13 +31,23 @@ class Side(Enum):
 
 @dataclass(frozen=True)
 class Arena:
-    """The arena's logical dimensions, measured in tiles."""
+    """Arena dimensions"""
+    # Pygame is weird where top screen is y = 0 lower you go y increases.
 
     rows: int = ROWS
     columns: int = COLUMNS
     tower_x: float = COLUMNS / 2
     top_tower_y: float = 0.0
     bottom_tower_y: float = float(ROWS)
+
+    # river is 4 tiles wide
+    river_y_top = ROWS / 2 - 2
+    river_y_bottom = ROWS / 2 + 2
+
+    bridge_y = ROWS / 2
+    bridge_left_x = COLUMNS / 2 - 6
+    bridge_right_x = COLUMNS / 2 + 6
+
 
 
 @dataclass
@@ -44,16 +60,20 @@ class Troop:
     x: float
     y: float
     radius: int
+    attack: int
+    targettroop: int | None # id of object targetting;
+    target_is_tower: bool # yes = is_tower
 
 
 @dataclass
 class Player:
     """The cards, elixir, and tower state belonging to one side."""
 
+    side: Side
     cards: list[Card]
     selected_card: Card | None = None
     elixir: float = STARTING_ELIXIR
-    tower_hp: int | None = None
+    tower_hp: int = STARTING_TOWER_HP
     troops: dict[int, Troop] = field(default_factory=dict)
 
 
@@ -61,58 +81,107 @@ class ClashGame:
     """Headless state for a two-player game."""
 
     def __init__(self):
+        # define arena, players, and start troop ID, which is incremented as troops are played
         self.arena = Arena()
         self.next_troop_id = 0
         self.players: dict[Side, Player] = {
-            Side.TOP: Player(cards=list(CARDS)),
-            Side.BOTTOM: Player(cards=list(CARDS)),
+            Side.TOP: Player(side=Side.TOP, cards=list(CARDS)),
+            Side.BOTTOM: Player(side=Side.BOTTOM, cards=list(CARDS)),
         }
 
-    def place_selected_card(self, side: Side, row: int, column: int) -> bool:
-        player = self.players[side]
+    def place_selected_card(self, row: int, column: int) -> bool:
+        #player = self.players[side]
+
+         # so technically you are allowed to play your opponent's card, but when we train the RL, we can probably
+        # just mask that ourselves so it is not an issue the RL learns to play opponent cards.
+
+        # if you click bottom half, it will try to place troop as BOTTOM player, else place as TOP player
+        if row >= self.arena.river_y_bottom:
+            player = self.players[Side.BOTTOM]
+        elif row < self.arena.river_y_top:
+            player = self.players[Side.TOP]
+        else: return False # need elif + else because river space doesn't count as any player
         card = player.selected_card
 
-        if card is None:
+        if card is None: # no selected card
             return False
-        if not (0 <= row < self.arena.rows and 0 <= column < self.arena.columns):
+        if not (0 <= row < self.arena.rows and 0 <= column < self.arena.columns): # card place outside Arena
             return False
+
+       
+        # old reference: mask river and other player's side
+        # if player.side is Side.TOP and row >= self.arena.river_y_top:
+        #     return False
+        # if player.side is Side.BOTTOM and row < self.arena.river_y_bottom:
+        #     return False
+
+        # mask tower part; no allow place on tower
+        tower_left = self.arena.tower_x - TOWER_WIDTH / 2
+        tower_right = self.arena.tower_x + TOWER_WIDTH / 2
+        
+        #booleans to check
+        in_tower_column = tower_left <= column < tower_right
+        in_top_tower = row < self.arena.top_tower_y + TOWER_HEIGHT
+        in_bottom_tower = row >= self.arena.bottom_tower_y - TOWER_HEIGHT
+        if in_tower_column and (in_top_tower or in_bottom_tower):
+            return False
+
         if player.elixir < card.elixir_cost:
             return False
 
+        # if pass all checks, define Troop
         troop = Troop(
             id=self.next_troop_id,
             card=card,
             hp=card.hp,
-            x=column + 0.5,
+            x=column + 0.5, # need 0.5 or else place at CORNER of tile not middle.
             y=row + 0.5,
-            radius = card.radius
+            radius=card.radius,
+            attack=card.attack,
+            targettroop=None,
+            target_is_tower=False
         )
-        player.troops[troop.id] = troop
+        player.troops[troop.id] = troop # player.troops is a mutable dict
         self.next_troop_id += 1
         player.elixir -= card.elixir_cost
         player.selected_card = None
         return True
 
+    # 1 game tick
+    # 1. core idea. Update elixir (easy), MOVE troops toward each other (complex)
     def tick(self):
-        for side, player in self.players.items():
+        # a. elixir
+        for player in self.players.values():
             player.elixir = min(
                 MAX_ELIXIR,
                 player.elixir + ELIXIR_PER_SECOND / FPS,
             )
 
-        next_positions: dict[int, tuple[float, float]] = {}
+        # b. i. get closest targets for each card; this is used twice, once for moving and once for attacking
+        # ----------------------------------------------------
+        closest_targets: dict[int, tuple[float, float, float, int | None]] = {}
+        tower_left = self.arena.tower_x - TOWER_WIDTH / 2
+        tower_right = self.arena.tower_x + TOWER_WIDTH / 2
 
-        for side, player in self.players.items():
-            if side is Side.TOP:
-                opponent = self.players[Side.BOTTOM]
-                tower_y = self.arena.bottom_tower_y
+        # for each player
+        for player in self.players.values():
+            opponent_side = (
+                Side.BOTTOM if player.side is Side.TOP else Side.TOP
+            )
+            opponent = self.players[opponent_side]
+            if player.side is Side.TOP:
+                tower_top = self.arena.bottom_tower_y - TOWER_HEIGHT
+                tower_bottom = self.arena.bottom_tower_y
             else:
-                opponent = self.players[Side.TOP]
-                tower_y = self.arena.top_tower_y
+                tower_top = self.arena.top_tower_y
+                tower_bottom = self.arena.top_tower_y + TOWER_HEIGHT
 
+            # for each troop of that player and enemy O(N^2)
             for troop in player.troops.values():
-                target_x = self.arena.tower_x
-                target_y = tower_y
+                target_x = min(max(troop.x, tower_left), tower_right)
+                target_y = min(max(troop.y, tower_top), tower_bottom)
+
+                target_id = None
                 closest_distance_squared = (
                     (target_x - troop.x) ** 2 + (target_y - troop.y) ** 2
                 )
@@ -124,25 +193,162 @@ class ClashGame:
                     if distance_squared < closest_distance_squared:
                         target_x = enemy.x
                         target_y = enemy.y
+                        target_id = enemy.id
                         closest_distance_squared = distance_squared
 
-                dx = target_x - troop.x
-                dy = target_y - troop.y
-                distance = hypot(dx, dy)
+                # save closest targets for each troop per tick
+                closest_targets[troop.id] = (
+                    hypot(target_x - troop.x, target_y - troop.y),
+                    target_x,
+                    target_y,
+                    target_id,
+                )
 
-                print(troop.radius)
+        # ----------------------------------------------------
 
-                if distance == 0 or distance <= troop.radius:
-                    next_positions[troop.id] = (troop.x, troop.y)
-                elif distance <= MOVEMENT_PER_TICK and distance >= troop.radius:
-                    next_positions[troop.id] = (target_x, target_y)
-                else:
-                    movement_scale = MOVEMENT_PER_TICK / distance
-                    next_positions[troop.id] = (
-                        troop.x + dx * movement_scale,
-                        troop.y + dy * movement_scale,
+        # worth checking out Akshun, probably most messy part of my code.
+        # b. ii. next positions of each troop move to; we save dict of next positions then move all at once, so that no weird changes ykwim.
+        next_positions: dict[int, tuple[float, float]] = {}
+        # damage dealt
+        troop_damage: dict[int, int] = {}
+        tower_damage = {
+            player.side: 0 for player in self.players.values()
+        }
+
+        for player in self.players.values():
+            opponent_side = (
+                Side.BOTTOM if player.side is Side.TOP else Side.TOP
+            )
+            opponent = self.players[opponent_side]
+
+            for troop in player.troops.values():
+                distance, target_x, target_y, target_id = closest_targets[troop.id]
+
+                # brief explain lock on system: If a troop locks onto an enemy, it keeps attacking it even if another enemy gets closer
+
+                # if the enemy a troop is targetting dies
+                
+                if troop.targettroop is not None and troop.targettroop not in opponent.troops:
+                    # troop is no longer locked onto a target, reset
+                    troop.targettroop = None
+                    troop.target_is_tower = False
+
+                # if the enemy a troop is targetting is still alive check if still in range
+                if troop.targettroop is not None:
+                    locked_target = opponent.troops[troop.targettroop]
+                    locked_distance = hypot(
+                        locked_target.x - troop.x,
+                        locked_target.y - troop.y,
                     )
+                    if locked_distance > troop.radius:
+                        # troop is no longer locked onto a target, reset
+                        troop.targettroop = None
+                        troop.target_is_tower = False
 
+                # 1. if enemy (targetted or just closest) in range, attack!
+                if (troop.targettroop != None or troop.target_is_tower == True) or (distance <= troop.radius):
+                    next_positions[troop.id] = (troop.x, troop.y)
+                    # if a target is already locked on, do not delock it from current target
+                    if troop.targettroop != None or troop.target_is_tower == True:
+                        # if targetting troop
+                        if troop.target_is_tower != True:
+                            troop_damage[troop.targettroop] = (
+                                troop_damage.get(troop.targettroop, 0) + troop.attack
+                            )
+                        
+                        # if targetting tower
+                        else:
+                            target_tower = (
+                                Side.BOTTOM
+                                if player.side is Side.TOP
+                                else Side.TOP
+                            )
+                            tower_damage[target_tower] += troop.attack
+                        continue
+                    # target general closest enemy 
+                    else:
+                        # if targetting troop
+                        if target_id is not None:
+                            troop.targettroop = target_id
+                            troop.target_is_tower = False
+                            troop_damage[target_id] = (
+                                troop_damage.get(target_id, 0) + troop.attack
+                            )
+                        # if targetting tower
+                        else:
+                            troop.target_is_tower = True
+                            target_tower = (
+                                Side.BOTTOM
+                                if player.side is Side.TOP
+                                else Side.TOP
+                            )
+                            tower_damage[target_tower] += troop.attack
+                        continue
+
+                # b. iii. Also a bit weird, MOVEMENT now after all ATTACK calculations.
+                move_x = target_x
+                move_y = target_y
+
+                # if need move toward bridge, which bridge is closer
+                closer_bridge = self.arena.bridge_left_x if abs(troop.x - self.arena.bridge_left_x) <= abs(troop.x - self.arena.bridge_right_x) else self.arena.bridge_right_x
+
+                # if troop below bridge and enemy is above bridge, then move toward bridge.
+                if troop.y > self.arena.river_y_bottom and target_y <= self.arena.river_y_bottom:
+                    move_x = closer_bridge
+                    move_y = self.arena.river_y_bottom
+                # if troop above bridge and enemy is below bridge, then move toward bridge
+                elif troop.y < self.arena.river_y_top and target_y >= self.arena.river_y_top:
+                    move_x = closer_bridge
+                    move_y = self.arena.river_y_top
+
+                # if in bridge and target is outside bridge on a side go to end bridge
+                elif (troop.y >= self.arena.river_y_top and troop.y <= self.arena.river_y_bottom) and ((target_y < self.arena.river_y_top and troop.y > self.arena.river_y_top) or (target_y > self.arena.river_y_bottom and troop.y < self.arena.river_y_bottom)):
+                    target_side = self.arena.river_y_top if target_y < self.arena.river_y_top else self.arena.river_y_bottom
+                    move_x = closer_bridge
+                    move_y = target_side
+                # if in bridge and target is also in bridge
+                elif (troop.y >= self.arena.river_y_top and troop.y <= self.arena.river_y_bottom) and (target_y >= self.arena.river_y_top and target_y <= self.arena.river_y_bottom):
+                    if distance <= 6: # they are on the same bridge
+                        move_x = target_x
+                        move_y = target_y
+                    else:
+                        # just move to end of bridge depending on what side the troop is from
+                        if (player.side is Side.BOTTOM):
+                            move_x = closer_bridge
+                            move_y = self.arena.river_y_top
+                        else:
+                            move_x = closer_bridge
+                            move_y = self.arena.river_y_bottom
+                # just move as usual
+                else:
+                    move_x = target_x
+                    move_y = target_y
+
+                move_distance = hypot(move_x - troop.x, move_y - troop.y)
+                if move_distance == 0:
+                    next_positions[troop.id] = (troop.x, troop.y)
+                    continue
+                movement = min(MOVEMENT_PER_TICK, move_distance)
+                movement_scale = movement / move_distance
+                next_positions[troop.id] = (
+                    troop.x + (move_x - troop.x) * movement_scale,
+                    troop.y + (move_y - troop.y) * movement_scale,
+                )
+
+        # b. iv. UPDATE ALL HP and DAMAGE
         for player in self.players.values():
             for troop in player.troops.values():
                 troop.x, troop.y = next_positions[troop.id]
+
+                # damage if existing
+                damage_taken = troop_damage.get(troop.id, 0)
+                troop.hp -= damage_taken
+            player.tower_hp -= tower_damage[player.side]
+
+        # b. v. if any troops are dead then delete them from the game environment.
+        for player in self.players.values():
+            dead_troop_ids = [
+                troop.id for troop in player.troops.values() if troop.hp <= 0
+            ]
+            for troop_id in dead_troop_ids:
+                del player.troops[troop_id]
