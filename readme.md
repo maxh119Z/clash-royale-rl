@@ -16,7 +16,9 @@ python human_play.py
 ```
 
 # To-do
-Not sure, we should figure this sometime.
+Not sure, we should figure this sometime. There are some intentional features I have, like both sides of board can be masked I put it in comments next to where I coded the functionality, but not sure what needs to change.
+
+Generally for RL we need a good game environment that's efficient and has all the necessary functionality before we can code the RL agent. Right now it is in a decent spot, could be more like CR i guess. There's also the question of what RL agent to use which I had some ideas but haven't looked deeply. Once we are sure the game env is perfect we can start with RL, but one of us can research the RL as well as someone finishes the Game Env
 
 # structure
 ```
