@@ -1,6 +1,6 @@
 #human_play.py just defines what clash.py has and runs the game
 #In-game actions like MOUSEDOWN are also handled here, which makes sense
-#THe environment clash.py is game mechanics + rules, human_play.py is like interaction with env
+#THe environment clash.py is game mechanics + rules, human_play.py is just like interaction with env
 import pygame
 
 from envs.clash import ClashGame
@@ -42,6 +42,13 @@ while True:
 
     # move troops + update elixir; backend calculations + update
     game.tick()
+    # if game has ended
+    if (game.game_ended):
+        if game.winner is None:
+            print("Draw")
+        else:
+            print(f"{game.winner} won")
+        break
 
     hovered_tile = renderer.tile_at_position(pygame.mouse.get_pos())
 

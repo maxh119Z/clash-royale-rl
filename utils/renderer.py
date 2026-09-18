@@ -308,9 +308,9 @@ class ArenaRenderer:
             color = RED_TOP if player.side is Side.TOP else BLUE_BOTTOM
             hp_rect = pygame.Rect(
                 rect.left,
-                rect.top - TILE_SIZE // 2,
+                rect.top - TILE_SIZE // 4,
                 int(TILE_SIZE * troop.hp / troop.card.hp),
-                TILE_SIZE // 2,
+                TILE_SIZE // 4,
             )
             pygame.draw.rect(self.window, color, hp_rect)
 

@@ -3,6 +3,13 @@
 # and also core functions. Just think anything GAME MECHANIC is in this file. 
 # CORE GAME ENVIRONMENT.
 
+# choices
+"""
+1. game winner decided by who has more HP if time runs out
+2. towers cannot shoot: it is like heist
+
+"""
+
 from dataclasses import dataclass, field
 from enum import Enum
 from math import hypot
@@ -15,11 +22,14 @@ COLUMNS = 18
 
 MAX_ELIXIR = 10.0
 STARTING_ELIXIR = 4.0
-ELIXIR_PER_SECOND = 1 # match CR real game: 0.357
+ELIXIR_PER_SECOND = 0.714 # to match CR real game set to: 0.357; double elixir = 0.714
 MOVEMENT_PER_TICK = 1 / FPS
 STARTING_TOWER_HP = 1000
+GAME_TIME = 3000 # 100 seconds
 TOWER_WIDTH = 4
 TOWER_HEIGHT = 4
+GAME_ENDED = False
+WINNER = None
 
 
 class Side(Enum):
@@ -60,9 +70,12 @@ class Troop:
     x: float
     y: float
     radius: int
+    sightradius: int
     attack: int
     targettroop: int | None # id of object targetting;
     target_is_tower: bool # yes = is_tower
+    cooldown: int
+    attack_cooldown: int
 
 
 @dataclass
@@ -80,6 +93,7 @@ class Player:
 class ClashGame:
     """Headless state for a two-player game."""
 
+
     def __init__(self):
         # define arena, players, and start troop ID, which is incremented as troops are played
         self.arena = Arena()
@@ -88,9 +102,15 @@ class ClashGame:
             Side.TOP: Player(side=Side.TOP, cards=list(CARDS)),
             Side.BOTTOM: Player(side=Side.BOTTOM, cards=list(CARDS)),
         }
+        self.game_ended = False
+        self.winner: Side | None = None
+        self.timer: int = GAME_TIME
 
     def place_selected_card(self, row: int, column: int) -> bool:
         #player = self.players[side]
+
+        if self.game_ended:
+            return False
 
          # so technically you are allowed to play your opponent's card, but when we train the RL, we can probably
         # just mask that ourselves so it is not an issue the RL learns to play opponent cards.
@@ -108,7 +128,7 @@ class ClashGame:
         if not (0 <= row < self.arena.rows and 0 <= column < self.arena.columns): # card place outside Arena
             return False
 
-       
+        
         # old reference: mask river and other player's side
         # if player.side is Side.TOP and row >= self.arena.river_y_top:
         #     return False
@@ -129,20 +149,128 @@ class ClashGame:
         if player.elixir < card.elixir_cost:
             return False
 
+        # if you place tile on border, we must have system to not have troop go off the map
+        left = 0.5 if column == 0 else 0
+        right = -0.6 if column == self.arena.columns - 1 else 0
+        top = 0.5 if row == 0 or row == self.arena.river_y_bottom else 0
+        bottom = -0.5 if row == self.arena.rows - 1 or row == self.arena.river_y_top - 1 else 0
+
         # if pass all checks, define Troop
-        troop = Troop(
-            id=self.next_troop_id,
-            card=card,
-            hp=card.hp,
-            x=column + 0.5, # need 0.5 or else place at CORNER of tile not middle.
-            y=row + 0.5,
-            radius=card.radius,
-            attack=card.attack,
-            targettroop=None,
-            target_is_tower=False
-        )
-        player.troops[troop.id] = troop # player.troops is a mutable dict
-        self.next_troop_id += 1
+        #spawn 4 goblins
+        if card.name == "Goblins":
+            troop1 = Troop(
+                id=self.next_troop_id,
+                card=card,
+                hp=card.hp,
+                x=column + 0 + left + right,
+                y=row + 1 + top + bottom,
+                radius=card.radius,
+                sightradius = card.sightradius,
+                attack=card.attack,
+                targettroop=None,
+                target_is_tower=False,
+                cooldown=card.attack_cooldown,
+                attack_cooldown=card.attack_cooldown
+            )
+            troop2 = Troop(
+                id=self.next_troop_id+1,
+                card=card,
+                hp=card.hp,
+                x=column + 1.1 + left + right, # without the 1.1 instead of 1, the mobs do not split lanes when placed in the middle
+                y=row + 1 + top + bottom,
+                radius=card.radius,
+                sightradius = card.sightradius,
+                attack=card.attack,
+                targettroop=None,
+                target_is_tower=False,
+                cooldown=card.attack_cooldown,
+                attack_cooldown=card.attack_cooldown
+            )
+            troop3 = Troop(
+                id=self.next_troop_id+2,
+                card=card,
+                hp=card.hp,
+                x=column + 0 + left + right,
+                y=row + 0 + top + bottom,
+                radius=card.radius,
+                sightradius = card.sightradius,
+                attack=card.attack,
+                targettroop=None,
+                target_is_tower=False,
+                cooldown=card.attack_cooldown,
+                attack_cooldown=card.attack_cooldown
+            )
+            troop4 = Troop(
+                id=self.next_troop_id+3,
+                card=card,
+                hp=card.hp,
+                x=column + 1.1 + left + right,
+                y=row + 0 + top + bottom,
+                radius=card.radius,
+                sightradius = card.sightradius,
+                attack=card.attack,
+                targettroop=None,
+                target_is_tower=False,
+                cooldown=card.attack_cooldown,
+                attack_cooldown=card.attack_cooldown
+            )
+            player.troops[troop1.id] = troop1 # player.troops is a mutable dict
+            player.troops[troop2.id] = troop2
+            player.troops[troop3.id] = troop3
+            player.troops[troop4.id] = troop4
+            self.next_troop_id += 4
+
+        # spawn 3 spear goblins
+        elif card.name == "Spear Goblins":
+            troop1 = Troop(
+                id=self.next_troop_id,
+                card=card,
+                hp=card.hp,
+                x=column + 0 + left + right,
+                y=row + (1 if player.side is Side.TOP else 0) + top + bottom,
+                radius=card.radius,
+                sightradius = card.sightradius,
+                attack=card.attack,
+                targettroop=None,
+                target_is_tower=False,
+                cooldown=card.attack_cooldown,
+                attack_cooldown=card.attack_cooldown
+            )
+            troop2 = Troop(
+                id=self.next_troop_id+1,
+                card=card,
+                hp=card.hp,
+                x=column + 1.1 + left + right,
+                y=row + (1 if player.side is Side.TOP else 0) + top + bottom,
+                radius=card.radius,
+                sightradius = card.sightradius,
+                attack=card.attack,
+                targettroop=None,
+                target_is_tower=False,
+                cooldown=card.attack_cooldown,
+                attack_cooldown=card.attack_cooldown
+            )
+            troop3 = Troop(
+                id=self.next_troop_id+2,
+                card=card,
+                hp=card.hp,
+                x=column + 0.55 + left + right,
+                y=row + (0 if player.side is Side.TOP else 1) + top + bottom,
+                radius=card.radius,
+                sightradius = card.sightradius,
+                attack=card.attack,
+                targettroop=None,
+                target_is_tower=False,
+                cooldown=card.attack_cooldown,
+                attack_cooldown=card.attack_cooldown
+            )
+    
+            player.troops[troop1.id] = troop1 # player.troops is a mutable dict
+            player.troops[troop2.id] = troop2
+            player.troops[troop3.id] = troop3
+            self.next_troop_id += 3
+
+        
         player.elixir -= card.elixir_cost
         player.selected_card = None
         return True
@@ -150,6 +278,11 @@ class ClashGame:
     # 1 game tick
     # 1. core idea. Update elixir (easy), MOVE troops toward each other (complex)
     def tick(self):
+        if self.game_ended:
+            return
+
+        self.timer -= 1
+
         # a. elixir
         for player in self.players.values():
             player.elixir = min(
@@ -190,7 +323,7 @@ class ClashGame:
                     distance_squared = (
                         (enemy.x - troop.x) ** 2 + (enemy.y - troop.y) ** 2
                     )
-                    if distance_squared < closest_distance_squared:
+                    if distance_squared < closest_distance_squared and distance_squared < troop.sightradius*troop.sightradius:
                         target_x = enemy.x
                         target_y = enemy.y
                         target_id = enemy.id
@@ -206,7 +339,7 @@ class ClashGame:
 
         # ----------------------------------------------------
 
-        # worth checking out Akshun, probably most messy part of my code.
+        # probably most messy part of my code.
         # b. ii. next positions of each troop move to; we save dict of next positions then move all at once, so that no weird changes ykwim.
         next_positions: dict[int, tuple[float, float]] = {}
         # damage dealt
@@ -222,9 +355,12 @@ class ClashGame:
             opponent = self.players[opponent_side]
 
             for troop in player.troops.values():
+                
+
+
                 distance, target_x, target_y, target_id = closest_targets[troop.id]
 
-                # brief explain lock on system: If a troop locks onto an enemy, it keeps attacking it even if another enemy gets closer
+                # If a troop locks onto an enemy, it keeps attacking it even if another enemy gets closer
 
                 # if the enemy a troop is targetting dies
                 
@@ -248,6 +384,14 @@ class ClashGame:
                 # 1. if enemy (targetted or just closest) in range, attack!
                 if (troop.targettroop != None or troop.target_is_tower == True) or (distance <= troop.radius):
                     next_positions[troop.id] = (troop.x, troop.y)
+
+                    if troop.cooldown > 0:
+                        troop.cooldown-=1 # card starts cooldown once it's ready to attack
+                        continue
+                        
+
+                    troop.cooldown = troop.attack_cooldown
+
                     # if a target is already locked on, do not delock it from current target
                     if troop.targettroop != None or troop.target_is_tower == True:
                         # if targetting troop
@@ -344,6 +488,26 @@ class ClashGame:
                 damage_taken = troop_damage.get(troop.id, 0)
                 troop.hp -= damage_taken
             player.tower_hp -= tower_damage[player.side]
+
+
+        # b. iv. ii. END GAME IF DEAD
+        top_hp = self.players[Side.TOP].tower_hp
+        bottom_hp = self.players[Side.BOTTOM].tower_hp
+        if top_hp <= 0 and bottom_hp <= 0:
+            self.game_ended = True
+            self.winner = None
+        elif top_hp <= 0:
+            self.game_ended = True
+            self.winner = Side.BOTTOM
+        elif bottom_hp <= 0:
+            self.game_ended = True
+            self.winner = Side.TOP
+        elif self.timer <= 0:
+            self.game_ended = True
+            if top_hp == bottom_hp:
+                self.winner = None
+            else:
+                self.winner = Side.TOP if top_hp > bottom_hp else Side.BOTTOM
 
         # b. v. if any troops are dead then delete them from the game environment.
         for player in self.players.values():

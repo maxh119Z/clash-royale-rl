@@ -1,4 +1,4 @@
-name: rl_fun_times
+name: clash-royale-rl
 channels:
   - pytorch
   - conda-forge
