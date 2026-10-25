@@ -434,7 +434,11 @@ class ClashGame:
                 move_y = target_y
 
                 # if need move toward bridge, which bridge is closer
-                closer_bridge = self.arena.bridge_left_x if abs(troop.x - self.arena.bridge_left_x) <= abs(troop.x - self.arena.bridge_right_x) else self.arena.bridge_right_x
+                troop_bridge_y = min(max(troop.y, self.arena.river_y_top), self.arena.river_y_bottom)
+                target_bridge_y = min(max(target_y, self.arena.river_y_top), self.arena.river_y_bottom)
+                left_bridge_distance = hypot(troop.x - self.arena.bridge_left_x, troop.y - troop_bridge_y) + hypot(target_x - self.arena.bridge_left_x, target_y - target_bridge_y)
+                right_bridge_distance = hypot(troop.x - self.arena.bridge_right_x, troop.y - troop_bridge_y) + hypot(target_x - self.arena.bridge_right_x, target_y - target_bridge_y)
+                closer_bridge = self.arena.bridge_left_x if left_bridge_distance <= right_bridge_distance else self.arena.bridge_right_x
 
                 # if troop below bridge and enemy is above bridge, then move toward bridge.
                 if troop.y > self.arena.river_y_bottom and target_y <= self.arena.river_y_bottom:
