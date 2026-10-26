@@ -1,3 +1,6 @@
+what's next. Environment is in place. Need to figure out reward function and the dqn inference. Finally the train_dqn.py
+
+
 Start of clash royale RL
 
 # clash-royale-rl
@@ -13,6 +16,8 @@ conda activate clash-royale-rl
 # Run game
 ```
 python human_play.py
+
+python tests.py
 ```
 
 # structure
